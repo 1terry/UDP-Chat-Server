@@ -4,6 +4,8 @@ import datetime
 import signal
 import sys
 import selectors
+import struct
+import hashlib
 from string import punctuation
 
 # Constant for our buffer size
@@ -19,6 +21,50 @@ sel = selectors.DefaultSelector()
 client_list = []
 
 # Signal handler for graceful exiting.  We let clients know in the process so they can disconnect too.
+
+sequeceNumber = 0
+MAX_STRING_SIZE = 256
+
+def rcv_packet(received_packet):
+    unpacker = struct.Struct(f'I I {MAX_STRING_SIZE}s 32s')
+    UDP_packet = unpacker.unpack(received_packet)
+    
+
+def rdt_send(data, host, port):
+    data = data.encode()
+    size = len(data)
+    global sequenceNumber
+    sequenceNumber = sequeceNumber + 1
+    
+    # Creates tuple
+    packet_tuple = (sequenceNumber, size, data)
+    packet_structure = struct.Struct(f'I I {MAX_STRING_SIZE}s')
+    packed_data = packet_structure.pack(*packet_tuple)
+    checksum =  bytes(hashlib.md5(packed_data).hexdigest(), encoding="UTF-8")
+
+    # Packs tuple
+    packet_tuple = (sequeceNumber,size,data,checksum)
+    UDP_packet_structure = struct.Struct(f'I I {MAX_STRING_SIZE}s 32s')
+    UDP_packet = UDP_packet_structure.pack(*packet_tuple)
+
+    # Sends tuple to client
+    client_socket.sendto(UDP_packet, (host, port))
+
+# Method checks if the data is corrupted or lost from server to client
+def checkPacket(self, packet):
+    sequence = packet[0]
+    size = packet[1]
+    data = packet[2]
+    checksum = packet[3]
+
+    if str(len(data)) != packet[1]:
+        return False
+    else:
+        received_checksum = hashlib.sha1(data.encode('utf-8')).hexdigest()
+        if received_checksum == checksum:
+            return True 
+    return False
+
 
 def signal_handler(sig, frame):
     print('Interrupt received, shutting down ...')

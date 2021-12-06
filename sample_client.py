@@ -27,6 +27,7 @@ def main():
     data = TEST_DATA.encode()
     size = len(data)
  
+ 
     # We now compute our checksum by building up the packet and running our checksum function on it.
     # Our packet structure will contain our sequence number first, followed by the size of the data,
     # followed by the data itself.  We fix the size of the string being sent ... as we are sending

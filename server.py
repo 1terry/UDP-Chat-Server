@@ -6,6 +6,7 @@ import sys
 import selectors
 import struct
 import hashlib
+import time
 from string import punctuation
 
 # Constant for our buffer size
@@ -25,12 +26,60 @@ client_list = []
 sequeceNumber = 0
 MAX_STRING_SIZE = 256
 
+# Each username should store a respective address and port
+user_address = ""
+user_port = 0
+
+lastPacket = None
+
+'''
+Basic idea:
+
+Every time we recieve a packet from the client:
+
+check for loss
+    - If there is loss, don't send anything, as client will send another packet on timeout
+
+If no loss, send an acknowledgement
+    - If there is loss on the acknowledgement, that will be dealt with on the client side
+  
+
+'''
+
+
+# Method checks if there is a duplicate package sent
+def checkDuplicate(lastPacket, newPacket):
+    unpacker = struct.Struct(f'I I {MAX_STRING_SIZE}s 32s')
+    old_packet = unpacker.unpack(lastPacket)
+    new_packet = unpacker.unpack(newPacket)
+
+    # If sequence numbers are the same, then there is a duplicate
+    if (old_packet[0] == new_packet[0]):
+        return True
+    return False
+
+# Method will resend packet if the packet recieved is a duplicate of the last packet recieved
+def resendPacket(packet):
+    if (checkDuplicate(lastPacket, packet)):
+        rdt_send(packet, )
+
 def rcv_packet(received_packet):
     unpacker = struct.Struct(f'I I {MAX_STRING_SIZE}s 32s')
     UDP_packet = unpacker.unpack(received_packet)
-    
 
-def rdt_send(data, host, port):
+    # Checks if packet has loss
+    try:
+        if (checkPacket(received_packet)):
+            return UDP_packet
+    except:
+        print("Waiting on packet")
+
+    # Otherwise, returns nothing
+    return None
+
+# Signal handler for graceful exiting.  Let the server know when we're gone.
+
+def rdt_send(data, user_address, user_port, socket):
     data = data.encode()
     size = len(data)
     global sequenceNumber
@@ -48,22 +97,26 @@ def rdt_send(data, host, port):
     UDP_packet = UDP_packet_structure.pack(*packet_tuple)
 
     # Sends tuple to client
-    client_socket.sendto(UDP_packet, (host, port))
+    socket.sendto(UDP_packet, (user_address, user_port))
 
 # Method checks if the data is corrupted or lost from server to client
 def checkPacket(self, packet):
+    # Gets info by breaking down packet
     sequence = packet[0]
     size = packet[1]
     data = packet[2]
     checksum = packet[3]
 
-    if str(len(data)) != packet[1]:
-        return False
+    # Computes the size of the value of the data sent 
+    values = (sequence, size, data)
+    packer = struct.Struct(f'I I {MAX_STRING_SIZE}s')
+    packed_data = packer.pack(*values)
+    computed_checksum =  bytes(hashlib.md5(packed_data).hexdigest(), encoding="UTF-8")
+    
+    if computed_checksum == checksum:
+        return True 
     else:
-        received_checksum = hashlib.sha1(data.encode('utf-8')).hexdigest()
-        if received_checksum == checksum:
-            return True 
-    return False
+        return False
 
 
 def signal_handler(sig, frame):
@@ -188,6 +241,8 @@ def read_message(sock, mask):
     # Receive the message.  
 
     else:
+        # Gets the corresponding client from socket
+        # Change this to a corresponding client from user name?
         user = client_search_by_socket(sock)
         print(f'Received message from user {user}:  ' + message)
         words = message.split(' ')
@@ -205,6 +260,9 @@ def read_message(sock, mask):
         elif ((len(words) == 2) and ((words[1] == '!list') or (words[1] == '!exit') or (words[1] == '!follow?'))):
             if words[1] == '!list':
                 response = list_clients() + '\n'
+
+                # get an associated
+                # sock.sendto()
                 sock.send(response.encode())
             elif words[1] == '!exit':
                 print('Disconnecting user ' + user)
@@ -300,7 +358,10 @@ def read_message(sock, mask):
 # Function to accept and set up clients.
 
 def accept_client(sock, mask):
+    # Does the address change?
     conn, addr = sock.accept()
+
+    # Prints address and stores
     print('Accepted connection from client address:', addr)
     message = get_line_from_socket(conn)
     message_parts = message.split()
@@ -344,7 +405,7 @@ def accept_client(sock, mask):
                         conn.send(response.encode())
                         conn.close()
                         return
-                else:
+                else: 
                     print('Error:  Invalid registration message.  Issue in follow list.')
                     print('Received: ' + message)
                     print('Connection closing ...')

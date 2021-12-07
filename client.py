@@ -37,19 +37,22 @@ user = ''
 sequenceNumber = 0
 size = 0
 data = ""
+
 # UDP Packet and port
+user_host = ""
+user_port = 0
 
 # Should this be buffer size?
 MAX_STRING_SIZE = 256
 
 # Send data should be good
-def rdt_send(data, host, port, sequenceNumber):
+def rdt_send(data, host, port, sequenceNumber, socketHost, socketPort):
     data = data.encode()
     size = len(data)
     sequenceNumber 
     
     # Creates tuple
-    packet_tuple = (sequenceNumber, size, data)
+    packet_tuple = (sequenceNumber, size, data, socketHost, socketPort)
     packet_structure = struct.Struct(f'I I {MAX_STRING_SIZE}s')
     packed_data = packet_structure.pack(*packet_tuple)
 
@@ -57,13 +60,12 @@ def rdt_send(data, host, port, sequenceNumber):
     checksum =  bytes(hashlib.md5(packed_data).hexdigest(), encoding="UTF-8")
 
     # Packs tuple
-    packet_tuple = (sequenceNumber,size,data,checksum)
+    packet_tuple = (sequenceNumber,size,data,user,socketHost, socketPort, checksum)
     UDP_packet_structure = struct.Struct(f'I I {MAX_STRING_SIZE}s 32s')
     UDP_packet = UDP_packet_structure.pack(*packet_tuple)
 
     # Sends tuple
     client_socket.sendto(UDP_packet, (host, port)) 
-
 
 # Method checks if the data is corrupted or lost from server to client, and continues sending until an unlost acknowledgement is recieved
 # should be good
@@ -72,10 +74,13 @@ def checkPacket(self, packet):
     sequence = packet[0]
     size = packet[1]
     data = packet[2]
-    checksum = packet[3]
+    user = packet[3]
+    socketHost = packet[4]
+    socketPort = packet[5]
+    checksum = packet[6]
 
     # Computes the size of the value of the data sent 
-    values = (sequence, size, data)
+    values = (sequence, size, data, user, socketHost, socketPort)
     packer = struct.Struct(f'I I {MAX_STRING_SIZE}s')
     packed_data = packer.pack(*values)
     computed_checksum =  bytes(hashlib.md5(packed_data).hexdigest(), encoding="UTF-8")
@@ -103,7 +108,7 @@ def getAcknowledgement(message):
             if (not checkPacket(recieved_UDP_packet)):
                 
                # Sends Packet again with same sequence number
-               rdt_send(message, host, port, sequenceNumber)
+               rdt_send(message, host, port, sequenceNumber, user_host, user_port)
                         
             # Otherwise, if the packet isn't lost, breaks out of the loop
             elif (checkPacket(recieved_UDP_packet)):
@@ -113,7 +118,7 @@ def getAcknowledgement(message):
             print("Packet was lost, resending")
 
             # Creates packet adn sends
-            rdt_send(message, host, port, sequenceNumber)       
+            rdt_send(message, host, port, sequenceNumber, user_host, user_port)       
 
 # Signal handler for graceful exiting.  Let the server know when we're gone.
 
@@ -122,7 +127,7 @@ def signal_handler(sig, frame):
     message=f'DISCONNECT {user} CHAT/1.0\n'
 
     # Creates packet for disconnect message
-    rdt_send(message, host, port)
+    rdt_send(message, host, port, sequenceNumber, user_host, user_port)                   
 
     # Checks if acknowledgement has been recieved, and resends info if data does not match
     getAcknowledgement(message)
@@ -182,7 +187,7 @@ def handle_message_from_server(sock, mask):
             # Creates packet storing info 
             global sequenceNumber
             sequenceNumber = (sequenceNumber + 1) % 2
-            rdt_send(header, host, port, sequenceNumber)
+            rdt_send(message, host, port, sequenceNumber, user_host, user_port)
 
             # Tries to get acknowledgment from server
             getAcknowledgement(header)
@@ -195,10 +200,10 @@ def handle_message_from_server(sock, mask):
 
                         sequenceNumber = (sequenceNumber + 1) % 2
                         # Sends tuples in a UDP format
-                        rdt_send(chunk, host, port, sequenceNumber)
+                        rdt_send(message, host, port, sequenceNumber, user_host, user_port)
 
                         # Gets acknowledgement
-                        getAcknowledgement(message)
+                        getAcknowledgement(chunk)
                                         
         else:
             header = f'Content-Length: -1\n'
@@ -206,7 +211,7 @@ def handle_message_from_server(sock, mask):
             sequenceNumber = (sequenceNumber + 1) % 2
 
             # Sends packet
-            rdt_send(header, host, port, sequenceNumber) 
+            rdt_send(message, host, port, sequenceNumber, user_host, user_port)
 
             # Tries to get acknowledgment from server
             getAcknowledgement(header)
@@ -238,6 +243,12 @@ def handle_message_from_server(sock, mask):
 
                     # Recieves chunk
                     chunk = sock.recv(BUFFER_SIZE)
+
+                    # Loops waiting for the proper package size while loss occurs
+                    while (not checkPacket(chunk)):
+                        time.sleep(2)
+                        chunk = sock.recv(BUFFER_SIZE)
+
                     bytes_read += len(chunk)
                     file_to_write.write(chunk)
         sock.setblocking(False)
@@ -259,7 +270,7 @@ def handle_keyboard_input(file, mask):
     sequenceNumber = (sequenceNumber + 1) % 2
 
     # Sends packet
-    client_socket.sendto(message, host, port, sequenceNumber) 
+    rdt_send(message, host, port, sequenceNumber, user_host, user_port)
 
     # Tries to get acknowledgment from server
     getAcknowledgement(message)
@@ -314,17 +325,27 @@ def main():
 
     # The connection was successful, so we can prep and send a registration message.
     
+    # Client address and port
+    socketInfo = client_socket.getpeername()
+    global user_host
+    global user_port 
+    user_host = socketInfo[0]
+    user_port = socketInfo[1]
+    print("Port: ", socketInfo[0], "Host: ", socketInfo[1])
+
+    # Register
     print('Connection to server established. Sending intro message...\n')
     message = f'REGISTER {user} CHAT/1.0\n'
-
+    
     # Sends packet
     sequenceNumber = (sequenceNumber + 1) % 2
-    client_socket.sendto(message, host, port, sequenceNumber) 
+    rdt_send(message, host, port, sequenceNumber, user_host, user_port) 
 
     # Tries to get acknowledgment from server
     getAcknowledgement(message)
 
     # client_socket.send(message.encode())
+
 
     # If we have terms to follow, we send them now.  Otherwise, we send an empty line to indicate we're done with registration.
 
@@ -334,7 +355,7 @@ def main():
         message = '\n'
 
     # Sends packet
-    client_socket.sendto(message, host, port, sequenceNumber) 
+    rdt_send(message, host, port, sequenceNumber, user_host, user_port) 
 
     # Tries to get acknowledgment from server
     getAcknowledgement(message)
